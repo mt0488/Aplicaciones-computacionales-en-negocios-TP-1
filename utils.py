@@ -226,25 +226,35 @@ class Handler:
     CLOSING_TIME: int = 18 * 60,
     N_ITERS: int = 1,
     AIRPORT_OPEN: bool = True, 
-    plane_params: Dict = {
-        "MAX_RADAR_DISTANCE": 100,
-        "MIN_THRESHOLD": 4,
-        "MIN_BUF": 5,
-        "DEVIATION_SPEED": 200,
-        "DT": 1 / 60,
-        "DATE": (2025, 9, 10, 6, 0, 0),    
-        "PROXIMITY_RANGE": [((100, 10_000_000), (300, 500)),
+    MAX_RADAR_DISTANCE: int = 100,
+    MIN_THRESHOLD: int = 4,
+    MIN_BUF:int = 5,
+    DEVIATION_SPEED:int = 200,
+    DT: float = 1 / 60, 
+    PROXIMITY_RANGE: List  =[((100, 10_000_000), (300, 500)),
                             ((50, 100), (250, 300)),
                             ((15, 50), (200, 250)),
                             ((5, 15), (150, 200)),
                             ((0, 5), (120, 150)),],
-        "LOWER_BOUNDS": [100, 50, 15, 5, 0],
-        "UPPER_BOUNDS": [10_000_000,100,50,15,5],
-        "MAX_SPEEDS": [500, 300, 250, 200, 150],
-        "MIN_SPEEDS": [300, 250, 200, 150, 120],
-        "PROP_BOUNCE": 0
-        }
+    LOWER_BOUNDS: List = [100, 50, 15, 5, 0],
+    UPPER_BOUNDS: List = [10_000_000,100,50,15,5],
+    MAX_SPEEDS: List = [500, 300, 250, 200, 150],
+    MIN_SPEEDS: List = [300, 250, 200, 150, 120],
+    PROP_BOUNCE: List = 0
     ):
+        plane_params = {
+                    "MAX_RADAR_DISTANCE": MAX_RADAR_DISTANCE,
+                    "MIN_THRESHOLD": MIN_THRESHOLD,
+                    "MIN_BUF": MIN_BUF,
+                    "DEVIATION_SPEED": DEVIATION_SPEED,
+                    "DT": DT, 
+                    "PROXIMITY_RANGE": PROXIMITY_RANGE,
+                    "LOWER_BOUNDS": LOWER_BOUNDS,
+                    "UPPER_BOUNDS": UPPER_BOUNDS,
+                    "MAX_SPEEDS": MAX_SPEEDS,
+                    "MIN_SPEEDS": MIN_SPEEDS,
+                    "PROP_BOUNCE": PROP_BOUNCE 
+        }
         self.LAMBDA = LAMBDA
         self.SIMULATION_TIME = SIMULATION_TIME
         self.DATE = DATE
