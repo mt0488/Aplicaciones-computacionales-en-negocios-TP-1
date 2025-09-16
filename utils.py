@@ -269,6 +269,9 @@ class Handler:
         results: Dict[str, Any] = {
             "simulations": []
         }
+        tracker: Dict[str, Any] = {
+            "simulations": []
+        }
             
         for sim in range(self.N_ITERS):
             now = datetime(*self.DATE)
@@ -361,117 +364,10 @@ class Handler:
                 "reposition_count": reposition_count,
                 "total_planes": len(all_planes)
             })
+            tracker["simulations"].append({
+                "simulation_id": sim,
+                "plane_history": [p.history for p in all_planes]
+            })
 
-        return results, all_planes
+        return results, tracker
     
-def visualize(plane_histories, SIMULATION_TIME):
-    """
-    plane_histories: lista de historiales de aviones.
-      Cada historial es una lista de tuplas (minutes_since_start, pos, dir, status).
-
-    Se construye arrivals_by_minute: dict[int -> list[int]] donde la clave es el minuto
-    y el valor son los índices de los aviones cuyo primer registro ocurre en ese minuto.
-    """
-    # --- Preprocesamiento: indices por minuto ---
-    arrivals_by_minute = {m: [] for m in range(SIMULATION_TIME + 1)}
-    for idx, hist in enumerate(plane_histories):
-        if not hist:
-            continue
-        # Tomamos el primer timestamp en minutos desde el inicio
-        t0 = int(hist[0][0])
-        if 0 <= t0 <= SIMULATION_TIME:
-            arrivals_by_minute[t0].append(idx)
-
-    pygame.init()
-
-    WIDTH, HEIGHT = 1500, 800
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Pygame 1500x800")
-    clock = pygame.time.Clock()
-
-    BACKGROUND = (2, 2, 255)
-    BLACK = (0, 0, 0)
-    WHITE = (255, 255, 255)
-
-    # Botón cuadrado (abajo-izquierda)
-    BTN_SIZE = 60
-    BTN_X, BTN_Y = 10, HEIGHT - BTN_SIZE - 10
-    button_rect = pygame.Rect(BTN_X, BTN_Y, BTN_SIZE, BTN_SIZE)
-
-    paused = False
-    i = 0  # iteración de simulación (minuto)
-    running = True
-
-    # Acá irían tus estructuras de simulación
-    all_planes = []
-
-    while running:
-        # --- Eventos ---
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if button_rect.collidepoint(event.pos):
-                    paused = not paused  # toggle
-
-        # --- Chequeo de llegadas en el minuto actual ---
-        # (si querés procesar el minuto 0 también)
-        for idx in arrivals_by_minute.get(i, []):
-            # Agregamos el avión idx a la simulación
-            # Conversión y tamaño del triángulo (podés mover estas constantes arriba del archivo)
-            NM_TO_PX   = 10     # 1 milla náutica = 10 px (por ahora no lo usamos acá, pero queda definido)
-            START_X    = 100    # px, posición de aparición
-            TRI_HEIGHT = 20     # px, “largo” del triángulo (punta->base)
-            TRI_BASE   = 12     # px, ancho de la base
-
-            # Distribución en "carriles" verticales para no superponer
-            LANE_TOP    = 80
-            LANE_SPAN   = 30
-            MAX_LANES   = max(1, (HEIGHT - 2*LANE_TOP) // LANE_SPAN)
-            lane        = idx % MAX_LANES
-            y_center    = LANE_TOP + lane * LANE_SPAN
-
-            # Triángulo apuntando hacia la izquierda (punta en x=START_X)
-            tip        = (START_X, y_center)
-            base_ul    = (START_X + TRI_HEIGHT, y_center - TRI_BASE // 2)
-            base_ll    = (START_X + TRI_HEIGHT, y_center + TRI_BASE // 2)
-            tri_points = [tip, base_ul, base_ll]
-
-            # Guardamos la correspondencia avión <-> triángulo
-            # (avion_idx, puntos_del_triangulo)
-            all_planes.append((idx, tri_points))
-
-        # --- Lógica de simulación ---
-        if not paused and i < SIMULATION_TIME:
-            # ... tu lógica por-tick ...
-            i += 1
-
-        # --- Dibujo ---
-        screen.fill(BACKGROUND)
-
-        # Botón (colores según estado)
-        if paused:
-            rect_color = WHITE
-            tri_color = BLACK
-        else:
-            rect_color = BLACK
-            tri_color = WHITE
-
-        pygame.draw.rect(screen, rect_color, button_rect, border_radius=8)
-
-        # Triángulo "play" centrado dentro del botón
-        left_x   = BTN_X + int(BTN_SIZE * 0.30)
-        right_x  = BTN_X + int(BTN_SIZE * 0.70)
-        top_y    = BTN_Y + int(BTN_SIZE * 0.25)
-        bottom_y = BTN_Y + int(BTN_SIZE * 0.75)
-        mid_y    = BTN_Y + BTN_SIZE // 2
-
-        tri_points = [(left_x, top_y), (left_x, bottom_y), (right_x, mid_y)]
-        pygame.draw.polygon(screen, tri_color, tri_points)
-
-        pygame.display.flip()
-        clock.tick(60)
-
-    pygame.quit()
-    sys.exit()
-
