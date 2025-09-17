@@ -191,7 +191,7 @@ def visualize(
                     plane_state[idx]["hist_pos"] += 1
 
                 # Construir rect en fila única con la nariz “anclada” a x_from_nm(pos)
-                t0, pos0, speed0, dir0, _ = hist[plane_state[idx]["hist_pos"]]
+                t0, pos0, speed0, dir0, min_congested0, rep_count0, _ = hist[plane_state[idx]["hist_pos"]]
                 # Extrapolar minutos desde ese estado
                 dt_min = max(0.0, sim_minutes - float(t0))
                 # Δpos en NM: dir=-1 reduce la distancia (hacia AEP)
@@ -226,7 +226,7 @@ def visualize(
                     st["hist_pos"] += 1
 
                 # Estado vigente
-                t_now, pos_nm, speed_knots, dir_now, status_now = hist[st["hist_pos"]]
+                t_now, pos_nm, speed_knots, dir_now, cong_count_now, rep_count_now, status_now = hist[st["hist_pos"]]
                 dir_now = int(dir_now)
                 status = (status_now or "").lower()
 

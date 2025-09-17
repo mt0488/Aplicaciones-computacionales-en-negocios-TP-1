@@ -87,8 +87,12 @@ class Plane:
         self.speed = update_speed(self.speed, self.speed_range[0], self.speed_range[1])
 
     def calc_gap(self, x: float) -> float:
-        time_from_next = ((self.pos - self.LOWER_BOUNDS[self.range_idx]) / self.speed) * 60
-        s = self.speed if time_from_next > 1 else self.MAX_SPEEDS[self.range_idx + 1]
+        s = self.speed
+        if self.dir == -1 and not (self.range_idx == len(self.MAX_SPEEDS) - 1):
+            if x < self.LOWER_BOUNDS[self.range_idx]:
+                curr_to_lower = self.pos - self.LOWER_BOUNDS[self.range_idx]
+                lower_to_next = self.LOWER_BOUNDS[self.range_idx] - x
+                return (abs(curr_to_lower/self.speed + lower_to_next/self.MAX_SPEEDS[self.range_idx + 1])) * 60
         return (abs(self.pos - x)/s) * 60
 
     def find_gap(self, plane_list: List['Plane']) -> int:
