@@ -1,0 +1,9 @@
+openpyxl
+pandas
+numpy
+matplotlib
+jupyter
+ipykernel
+scipy
+openpyxl
+tqdm

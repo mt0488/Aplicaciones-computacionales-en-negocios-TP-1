@@ -54,14 +54,17 @@ class Plane:
         self.speed: float = PROXIMITY_RANGE[0][1][1]  # knots
         self.dir: int = -1 # -1 towards AEP, 1 away from AEP
         self.id: Optional[int] = None
-        self.status: str = "on-time" # on-time | delayed | diverted | landed
+        self.status: str = "on-schedule" # on-schedule | delayed | diverted | landed
         self.landed: bool = False
         self.sta: datetime = None  # Scheduled Time of Arrival
         self.eta: datetime = None  # Estimated Time of Arrival
         self.ata: datetime = None  # Actual Time of Arrival
         self.dt: float = DT  # step size
         self.adjusting_speed: bool = False
+        self.minutes_congested: int = 0
+        self.reposition_count: int = 0
         self.history: List[Tuple[float, float, int, int, str]] = []
+
 
     def find_range_idx(self, x: float) -> int:
         """Returns current distance range index"""
@@ -83,6 +86,10 @@ class Plane:
 
         self.speed = update_speed(self.speed, self.speed_range[0], self.speed_range[1])
 
+    def calc_gap(self, x: float) -> float:
+        time_from_next = ((self.pos - self.LOWER_BOUNDS[self.range_idx]) / self.speed) * 60
+        s = self.speed if time_from_next > 1 else self.MAX_SPEEDS[self.range_idx + 1]
+        return (abs(self.pos - x)/s) * 60
 
     def find_gap(self, plane_list: List['Plane']) -> int:
         """
@@ -110,11 +117,11 @@ class Plane:
 
         # Check if next plane is 5 mins ahead
         if idx - 1 >= 0:
-            if timedelta(minutes=(abs(self.pos - positions[idx - 1]) / self.speed) * 60) < delta:
+            if timedelta(minutes=(self.calc_gap(positions[idx - 1]))) < delta:
                 return -1
         # Check if previous plane is 5 mins behind
         if idx < len(positions):
-            if timedelta(minutes=((positions[idx] - self.pos) / self.speed) * 60) < delta:
+            if timedelta(minutes=(self.calc_gap(positions[idx]))) < delta:
                 return -1
 
         return idx
@@ -128,48 +135,42 @@ class Plane:
         """
         
         # Move
-        if self.pos == 100 and not airport_open: # Handle airport closed and new airplane arriving
-            self.status = "diverted"
-            return
-        
         self.pos += self.speed * self.dt * self.dir
         t0 = datetime(*self.DATE)  # 2025-09-10 06:00:00
         minutes_since_start = (now - t0).total_seconds() / 60.0
         if self.pos <= 0:
             self.pos = 0
             will_bounce = np.random.uniform(0, 1) # deal with landing interruptions
-            if not airport_open: will_bounce = -1 # will always be < prop_bounce so arrving plane will bounce and go back to queue
-            
-            if will_bounce < self.PROP_BOUNCE:
+            if not airport_open:
+                self.status = "diverted"
                 self.dir = 1
-                self.speed = self.DEVIATION_SPEED
-                self.status = "bounced"
-            else:    
-                self.status = "landed"
-                self.landed = True
-                self.ata = now
-                self.eta = now
-            self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.status))
+            else:
+                if will_bounce < self.PROP_BOUNCE:
+                    self.dir = 1
+                    self.speed = self.DEVIATION_SPEED
+                    self.status = "bounced"
+                else:    
+                    self.status = "landed"
+                    self.landed = True
+                    self.ata = now
+                    self.eta = now
+            self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
             return
 
-        # Update ranges and eta
+        # Update ranges
         if self.dir == -1:
             self.update_ranges()
 
-        self.status = "delayed" if now > self.sta else "on-time"
-        self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.status))
+        self.minutes_congested += int((self.speed < self.MAX_SPEEDS[self.range_idx]) or (self.status == "repositioning"))
+        self.status = "delayed" if now > self.sta else "on-schedule"
+        self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
 
-    def update(self, plane_list: List['Plane'], plane_idx: int) -> Dict[str, Any]:
-        """
-        Lógica de espaciado/velocidad/desvío.
-        NO modifica plane_list. Devuelve una acción para aplicar afuera:
-          - {"action": "none"|"insert"|"divert", ...}
-        """
+    def update(self, plane_list: List['Plane'], reposition_list: List['Plane'], plane_idx: int) -> Dict[str, Any]:
+
         if self.status == "diverted":
             return {"action": "divert", "status": self.status, "idx": -10}
-        
         if self.status == "bounced":
-            self.status = "delayed"
+            self.status = "repositioning"
             return {"action": "reposition", "status": self.status, "idx": -1}
         if self.landed:
             return {"action": "none", "status": self.status, "idx": -1}
@@ -183,17 +184,27 @@ class Plane:
                 self.status = "diverted"
                 return {"action": "divert", "status": self.status, "idx": -10}
             elif idx == -1:
-                return {"action":"none", "status": self.status, "idx": -1} 
+                # Handle cases when plane doesn't find a gap and has to remain in the reposition queue
+                action = "none"
+                if plane_idx > 0:
+                    time_gap = self.calc_gap(reposition_list[plane_idx - 1].pos)
+                    if time_gap < self.MIN_THRESHOLD: self.speed = reposition_list[plane_idx - 1].speed - 20
+                    if self.speed < self.DEVIATION_SPEED - 50:
+                        self.status = "diverted"
+                        action = "divert"
+                return {"action": action, "status": self.status, "idx": -1} 
             else:
                 self.dir = -1
                 self.adjusting_speed = False
+                self.update_ranges()
                 self.speed = self.speed_range[1]
+                self.status = "on-schedule"
                 return {"action": "insert", "status": self.status, "idx": idx}
 
         # Moving towards AEP and self is not first plane
-        if 0 < plane_idx < len(plane_list) and plane_list[plane_idx - 1].eta is not None and self.eta is not None:
+        if 0 < plane_idx < len(plane_list):
             next_plane = plane_list[plane_idx - 1]
-            time_gap = ((self.pos - next_plane.pos) / self.speed) * 60
+            time_gap = self.calc_gap(next_plane.pos)
 
             if time_gap < self.MIN_THRESHOLD:
                 self.adjusting_speed = True
@@ -214,13 +225,15 @@ class Plane:
                 self.dir = 1
                 self.adjusting_speed = False
                 self.speed = self.DEVIATION_SPEED
-                return {"action": "reposition", "status": self.status}
+                self.reposition_count += 1
+                self.status = "repositioning"
+                return {"action": "reposition", "status": self.status, "idx": -1}
 
-        return {"action": "none", "status": self.status}
+        return {"action": "none", "status": self.status, "idx": -1}
 
 class Handler:
     def __init__(self, 
-    LAMBDA: float = 1/60,
+    LAMBDA: float = 0.1,
     SIMULATION_TIME: int = 18 * 60,
     DATE: Tuple = (2025, 9, 10, 6, 0, 0),
     CLOSING_TIME: int = 18 * 60,
@@ -231,7 +244,7 @@ class Handler:
     MIN_BUF:int = 5,
     DEVIATION_SPEED:int = 200,
     DT: float = 1 / 60, 
-    PROXIMITY_RANGE: List  =[((100, 10_000_000), (300, 500)),
+    PROXIMITY_RANGE: List = [((100, 10_000_000), (300, 500)),
                             ((50, 100), (250, 300)),
                             ((15, 50), (200, 250)),
                             ((5, 15), (150, 200)),
@@ -240,7 +253,7 @@ class Handler:
     UPPER_BOUNDS: List = [10_000_000,100,50,15,5],
     MAX_SPEEDS: List = [500, 300, 250, 200, 150],
     MIN_SPEEDS: List = [300, 250, 200, 150, 120],
-    PROP_BOUNCE: List = 0
+    PROP_BOUNCE: float = 0
     ):
         plane_params = {
                     "MAX_RADAR_DISTANCE": MAX_RADAR_DISTANCE,
@@ -270,20 +283,13 @@ class Handler:
         return p
 
     def sort_incoming(self, incoming_planes: List['Plane']) -> None:
-        old_incoming = incoming_planes.copy()
         incoming_planes.sort(key=lambda x: (x.pos is None, x.pos))
-        # Sanity check, nunca puede haber un avion "mas adelante" pero atras en la fila
-        # assert all(old_incoming[i] == incoming_planes[i] for i in range(len(old_incoming)))
 
     def simulate(self) -> Dict[str, Any]:
-        results: Dict[str, Any] = {
-            "simulations": []
-        }
-        tracker: Dict[str, Any] = {
-            "simulations": []
-        }
+        results: List[Dict] = []
+        tracker: List[Dict[str, Any]] = []
             
-        for sim in range(self.N_ITERS):
+        for sim in tqdm(range(self.N_ITERS), desc="Simulation:"):
             now = datetime(*self.DATE)
             all_planes: List[Plane] = []
             incoming_planes: List[Plane] = []
@@ -294,7 +300,7 @@ class Handler:
             reposition_count = 0
 
             for t in range(self.SIMULATION_TIME):
-                if self.CLOSING_TIME != 0:
+                if self.CLOSING_TIME < self.SIMULATION_TIME:
                     if self.CLOSING_TIME < t <= self.CLOSING_TIME + 30:
                         self.AIRPORT_OPEN = False
                     else:
@@ -310,7 +316,7 @@ class Handler:
                         p.tick(now, self.AIRPORT_OPEN)
 
                 # Sanity check
-                self.sort_incoming(incoming_planes)
+                # self.sort_incoming(incoming_planes)
 
                 i = 0
                 while i < len(incoming_planes):
@@ -322,7 +328,7 @@ class Handler:
                         # no update i bc removed element
                         continue
 
-                    res = p.update(incoming_planes, i)
+                    res = p.update(incoming_planes, repositioning_planes, i)
                     action = res.get("action", "none")
 
                     if action == "reposition": # plane has moved to repositioning queue
@@ -343,7 +349,7 @@ class Handler:
                 j = 0
                 while j < len(repositioning_planes):
                     p = repositioning_planes[j]
-                    res = p.update(incoming_planes, -1)
+                    res = p.update(incoming_planes, repositioning_planes, j)
                     action = res.get("action", "none")
 
                     if action == "insert":
@@ -353,7 +359,7 @@ class Handler:
                                 idx = len(incoming_planes)
                             incoming_planes.insert(idx, p)
                             repositioning_planes.pop(j)
-                        self.sort_incoming(incoming_planes) # Sanity check
+                        # self.sort_incoming(incoming_planes) # Sanity check
                         # no update j bc removed element
                         continue
 
@@ -367,14 +373,14 @@ class Handler:
 
                 now += timedelta(minutes=1)
 
-            results["simulations"].append({
+            results.append({
                 "simulation_id": sim,
                 "landed": landed_count,
                 "diverted": diverted_count,
                 "reposition_count": reposition_count,
                 "total_planes": len(all_planes)
             })
-            tracker["simulations"].append({
+            tracker.append({
                 "simulation_id": sim,
                 "plane_history": [p.history for p in all_planes]
             })
