@@ -192,7 +192,7 @@ class Plane:
         if self.dir == -1:
             self.update_ranges()
 
-        self.minutes_congested += int((self.speed < self.MAX_SPEEDS[self.range_idx]) or (self.status == "repositioning"))
+        self.minutes_congested += int((self.speed < self.MAX_SPEEDS[self.range_idx]) or (self.dir == 1))
         self.status = "delayed" if now > self.sta else "on-schedule"
         self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
 
