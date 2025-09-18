@@ -10,6 +10,33 @@ import bisect
 import sys
 import pygame
 
+def get_simulation_averages(sh, sim_id):
+  x = [{"plane_id": i, 
+      "start_time": sh[i][0][0],
+      "end_time": sh[i][-1][0],
+      "minutes_congested": sh[i][-1][4],
+      "reposition_count": sh[i][-1][5],
+      "diverted": int(sh[i][-1][6] == "diverted"),
+      "status": sh[i][-1][6],
+      } for i in range(len(sh))]
+
+  df = pd.DataFrame(x)
+  df["flight_time"] = df["end_time"] - df["start_time"]
+  mask = df["status"].isin(["landed"])
+  return {
+    "simulation_id": sim_id,
+    "mean_reposition": df["reposition_count"].mean(),
+    "mean_congestion": df["minutes_congested"].mean(),
+    "mean_flight_time": (df.loc[mask, "flight_time"]).mean(),
+    "mean_diverted": df["diverted"].mean()
+  }
+
+def generate_simulation_dataframe(simulation_history):
+  ls = []
+  for i, s in enumerate(simulation_history):
+    ls.append(get_simulation_averages(s, i))
+  return pd.DataFrame(ls)
+
 def update_speed(v, low, high):
     return max(low, min(high, v))
 
@@ -48,10 +75,10 @@ class Plane:
         self.PROP_BOUNCE = PROP_BOUNCE
 
         self.pos: int = MAX_RADAR_DISTANCE  # MN a AEP
-        self.range_idx: int = 0 # PROXIMITY_RANGE idx
-        self.dist_range: Tuple[int, int] = PROXIMITY_RANGE[0][0]
-        self.speed_range: Tuple[int, int] = PROXIMITY_RANGE[0][1]
-        self.speed: float = PROXIMITY_RANGE[0][1][1]  # knots
+        self.range_idx: int = 1 # PROXIMITY_RANGE idx
+        self.dist_range: Tuple[int, int] = PROXIMITY_RANGE[1][0]
+        self.speed_range: Tuple[int, int] = PROXIMITY_RANGE[1][1]
+        self.speed: float = PROXIMITY_RANGE[1][1][1]  # knots
         self.dir: int = -1 # -1 towards AEP, 1 away from AEP
         self.id: Optional[int] = None
         self.status: str = "on-schedule" # on-schedule | delayed | diverted | landed
@@ -70,7 +97,7 @@ class Plane:
         """Returns current distance range index"""
         for i, (dist_range, _) in enumerate(self.PROXIMITY_RANGE):
             dmin, dmax = dist_range
-            if dmin <= x <= dmax:
+            if dmin <= x < dmax:
                 return i
             
         if x < 0:
@@ -242,7 +269,8 @@ class Handler:
     DATE: Tuple = (2025, 9, 10, 6, 0, 0),
     CLOSING_TIME: int = 18 * 60,
     N_ITERS: int = 1,
-    AIRPORT_OPEN: bool = True, 
+    AIRPORT_OPEN: bool = True,
+    SAVE_HISTORY: bool = False, 
     MAX_RADAR_DISTANCE: int = 100,
     MIN_THRESHOLD: int = 4,
     MIN_BUF:int = 5,
@@ -272,6 +300,7 @@ class Handler:
                     "MIN_SPEEDS": MIN_SPEEDS,
                     "PROP_BOUNCE": PROP_BOUNCE 
         }
+        self.SAVE_HISTORY = SAVE_HISTORY
         self.LAMBDA = LAMBDA
         self.SIMULATION_TIME = SIMULATION_TIME
         self.DATE = DATE
@@ -291,7 +320,8 @@ class Handler:
 
     def simulate(self) -> Dict[str, Any]:
         results: List[Dict] = []
-        tracker: List[Dict[str, Any]] = []
+        tracker: List[Dict[str, Any]] = [] if self.SAVE_HISTORY else None
+        simulation_stats: List[Dict[str, Any]] = []
             
         for sim in tqdm(range(self.N_ITERS), desc="Simulation:"):
             now = datetime(*self.DATE)
@@ -384,10 +414,14 @@ class Handler:
                 "reposition_count": reposition_count,
                 "total_planes": len(all_planes)
             })
-            tracker.append({
-                "simulation_id": sim,
-                "plane_history": [p.history for p in all_planes]
-            })
+            hist = [p.history for p in all_planes]
+            if self.SAVE_HISTORY:
+                tracker.append({
+                    "simulation_id": sim,
+                    "plane_history": hist
+                })
+            simulation_stats.append(get_simulation_averages(hist, sim))
+                
 
-        return results, tracker
+        return pd.DataFrame(results), simulation_stats, tracker
     

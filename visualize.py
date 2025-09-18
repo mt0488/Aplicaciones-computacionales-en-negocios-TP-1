@@ -59,6 +59,8 @@ def visualize(
 
     pygame.font.init()
     FONT = pygame.font.SysFont(None, 18)
+    CLOCK_FONT = pygame.font.SysFont(None, 28)  # ← NUEVO: fuente para la hora
+
 
     # Colores
     BACKGROUND = (26, 39, 110)
@@ -328,6 +330,19 @@ def visualize(
             screen.blit(shadow_surface, sh)
             screen.blit(text_surface, txtr)
 
+        # ---- Reloj arriba a la derecha (HH:MM) ----
+        # Arranca 06:00 y avanza minuto a minuto; a las 00:00 termina la simulación
+        total_min = int(sim_minutes)
+        base_min = 6 * 60
+        hh = ((base_min + total_min) // 60) % 24
+        mm = (base_min + total_min) % 60
+        time_txt = f"{hh:02d}:{mm:02d}"
+
+        clock_surf = CLOCK_FONT.render(time_txt, True, WHITE)  # texto en blanco
+        clock_rect = clock_surf.get_rect()
+        clock_rect.top = 10
+        clock_rect.right = WIDTH - 10
+        screen.blit(clock_surf, clock_rect)
 
         pygame.display.flip()
         clock.tick(fps)
