@@ -197,7 +197,7 @@ class Plane:
                 self.status = "diverted"
                 self.minutes_congested += self.minutes_from_MVD()
                 self.dir = 1
-            else:
+            else: # el aeropuerto esta abierto
                 if will_bounce < self.PROP_BOUNCE:
                     self.dir = 1
                     self.speed = self.MAX_DEVIATION_SPEED
@@ -230,9 +230,10 @@ class Plane:
         if self.status == "diverted":
             return {"action": "divert", "status": self.status, "idx": -10}
         if self.status == "bounced":
+            self.reposition_count += 1
             self.status = "repositioning"
             return {"action": "reposition", "status": self.status, "idx": -1}
-        if self.landed:
+        if self.landed or self.status == "landed":
             return {"action": "none", "status": self.status, "idx": -1}
 
         # Plane is moving away from AEP
@@ -284,7 +285,7 @@ class Plane:
                     # keep safety speed until MIN_BUF is achieved
                     self.speed = next_plane.speed - self.SPEED_ADJUSTMENT
             else:
-                # Updte speed to max permitted speed
+                # Update speed to max permitted speed
                 self.speed = self.speed_range[1]
 
             # If self fell out of min speed, 
@@ -426,7 +427,8 @@ class Handler:
                         continue
 
                     i += 1
-
+                
+                self.sort_incoming(repositioning_planes)
                 j = 0
                 while j < len(repositioning_planes):
                     p = repositioning_planes[j]
@@ -475,5 +477,5 @@ class Handler:
             simulation_stats.append(get_simulation_averages(hist, sim))
                 
 
-        return pd.DataFrame(results), simulation_stats, tracker
+        return pd.DataFrame(results), pd.DataFrame(simulation_stats), tracker
     
