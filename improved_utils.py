@@ -113,7 +113,27 @@ class Plane:
             x = self.MAX_RADAR_DISTANCE
         minutes += ((31/200 + 5/150) * 60)
         return minutes
-    
+
+# ================================= NUEVO ===============================================
+    def expected_gap_in_1m(self, next_plane: 'Plane') -> float:
+        """Calculates expected gap between 2 planes if curr speed is maintained"""
+        if next_plane is None: return float('inf')
+
+        d_next = next_plane.pos + next_plane.speed * next_plane.dir * next_plane.dt
+        d_self = self.pos + self.speed * self.dir * self.dt
+        return abs(d_next - d_self)
+
+    def find_max_speed(self, next_plane: 'Plane', gap: float) -> int:
+        """Returns max allowed speed given current state"""
+        if self.dir == next_plane.dir: # Ambos estan en la misma cola de aviones
+            curr_gap = abs(next_plane.pos - self.pos)
+
+            return next_plane.speed + (curr_gap - gap)/self.dt
+        return self.speed_range[1]
+
+
+# ========================================================================================
+
     def find_range_idx(self, x: float) -> int:
         """Returns current distance range index"""
         for i, (dist_range, _) in enumerate(self.PROXIMITY_RANGE):
@@ -271,18 +291,19 @@ class Plane:
         # Moving towards AEP and self is not first plane
         if 0 < plane_idx < len(plane_list):
             next_plane = plane_list[plane_idx - 1]
-            time_gap = self.calc_gap(next_plane.pos)
+            expected_gap = self.expected_gap_in_1m(next_plane)
 
-            if time_gap < self.MIN_THRESHOLD:
+            if expected_gap < self.MIN_THRESHOLD:
                 self.adjusting_speed = True
 
             if self.adjusting_speed:
-                if time_gap >= self.MIN_BUF:
+                if expected_gap >= self.MIN_BUF:
                     self.adjusting_speed = False
                     self.speed = self.speed_range[1]
                 else:
                     # keep safety speed until MIN_BUF is achieved
-                    self.speed = next_plane.speed - self.SPEED_ADJUSTMENT
+                    new_speed = self.find_max_speed(next_plane, self.MIN_THRESHOLD)
+                    self.speed = min(new_speed, self.speed_range[1])
             else:
                 # Updte speed to max permitted speed
                 self.speed = self.speed_range[1]
