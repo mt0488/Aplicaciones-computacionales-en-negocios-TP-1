@@ -100,19 +100,6 @@ class Plane:
         self.minutes_congested: int = 0
         self.reposition_count: int = 0
         self.history: List[Tuple[float, float, int, int, int, int, str]] = [(minutes_from_start, MAX_RADAR_DISTANCE, self.speed, -1, 0, 0, "on-schedule")]
-
-
-    def minutes_from_MVD(self):
-        """
-        Returns minutes from MVD from current position assuming max speed can be achieved at every range.
-        """
-        minutes = 0
-        x = self.pos
-        if x < self.MAX_RADAR_DISTANCE:
-            minutes += ((self.MAX_RADAR_DISTANCE - self.pos)/ self.MAX_DEVIATION_SPEED) * 60
-            x = self.MAX_RADAR_DISTANCE
-        minutes += ((31/200 + 5/150) * 60)
-        return minutes
     
     def find_range_idx(self, x: float) -> int:
         """Returns current distance range index"""
@@ -195,7 +182,6 @@ class Plane:
             will_bounce = np.random.uniform(0, 1) # deal with landing interruptions
             if not airport_open:
                 self.status = "diverted"
-                self.minutes_congested += self.minutes_from_MVD()
                 self.dir = 1
             else: # el aeropuerto esta abierto
                 if will_bounce < self.PROP_BOUNCE:
@@ -219,7 +205,6 @@ class Plane:
 
         if self.pos > self.MAX_RADAR_DISTANCE:
             self.status = "diverted"
-            self.minutes_congested += self.minutes_from_MVD()
 
         self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
 
@@ -243,9 +228,6 @@ class Plane:
             idx = self.find_gap(plane_list)
             if idx == -10:
                 self.status = "diverted"
-                # Agregamos el tiempo estimado de llegada a MVD como minutos donde el avion sufre congestion/retraso
-                # dado que no formaba parte de su plan de vuelo
-                self.minutes_congested += self.minutes_from_MVD()
                 self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
                 return {"action": "divert", "status": self.status, "idx": -10}
             elif idx == -1:
@@ -257,7 +239,6 @@ class Plane:
                     if self.speed < self.MIN_DEVIATION_SPEED:
                         self.status = "diverted"
                         # Idem if idx == -10
-                        self.minutes_congested += self.minutes_from_MVD()
                         self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
                         action = "divert"
                 return {"action": action, "status": self.status, "idx": -1} 
