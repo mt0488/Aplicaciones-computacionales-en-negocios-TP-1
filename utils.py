@@ -11,7 +11,7 @@ import sys
 import pygame
 
 def get_simulation_averages(sh, sim_id):
-  x = [{"plane_id": i, 
+    x = [{"plane_id": i, 
       "start_time": sh[i][0][0],
       "end_time": sh[i][-1][0],
       "minutes_congested": sh[i][-1][4],
@@ -20,26 +20,26 @@ def get_simulation_averages(sh, sim_id):
       "status": sh[i][-1][6],
       } for i in range(len(sh))]
 
-  df = pd.DataFrame(x)
-  df["flight_time"] = df["end_time"] - df["start_time"]
-  mask = df["status"].isin(["landed"])
-  return {
-    "simulation_id": sim_id,
-    "mean_reposition": df["reposition_count"].mean(),
-    "mean_congestion_all": df["minutes_congested"].mean(),
-    "mean_congestion_landed": (df.loc[mask, "minutes_congested"]).mean(),
-    "mean_flight_time_all": df["flight_time"].mean(),
-    "mean_flight_time_landed": (df.loc[mask, "flight_time"]).mean(),
-    "mean_delay_all": df["flight_time"].mean() - 23,
-    "mean_delay_landed": (df.loc[mask, "flight_time"]).mean() - 23,
-    "mean_diverted": df["diverted"].mean()
-  }
+    df = pd.DataFrame(x)
+    df["flight_time"] = df["end_time"] - df["start_time"]
+    mask = df["status"].isin(["landed"])
+    return {
+        "simulation_id": sim_id,
+        "mean_reposition": df["reposition_count"].mean(),
+        "mean_congestion_all": df["minutes_congested"].mean(),
+        "mean_congestion_landed": (df.loc[mask, "minutes_congested"]).mean(),
+        "mean_flight_time_all": df["flight_time"].mean(),
+        "mean_flight_time_landed": (df.loc[mask, "flight_time"]).mean(),
+        "mean_delay_all": df["flight_time"].mean() - 23,
+        "mean_delay_landed": (df.loc[mask, "flight_time"]).mean() - 23,
+        "mean_diverted": df["diverted"].mean()
+    }
 
 def generate_simulation_dataframe(simulation_history):
-  ls = []
-  for i, s in enumerate(simulation_history):
-    ls.append(get_simulation_averages(s, i))
-  return pd.DataFrame(ls)
+    ls = []
+    for i, s in enumerate(simulation_history):
+        ls.append(get_simulation_averages(s, i))
+    return pd.DataFrame(ls)
 
 def update_speed(v, low, high):
     return max(low, min(high, v))
@@ -87,8 +87,8 @@ class Plane:
         self.range_idx: int = 1 # PROXIMITY_RANGE idx
         self.dist_range: Tuple[int, int] = PROXIMITY_RANGE[1][0]
         self.speed_range: Tuple[int, int] = PROXIMITY_RANGE[1][1]
-        self.speed: float = PROXIMITY_RANGE[1][1][1]  # knots
-        self.dir: int = -1 # -1 towards AEP, 1 away from AEP
+        self.speed: float = PROXIMITY_RANGE[1][1][1]  # nudos
+        self.dir: int = -1 # -1 moviéndose hacia AEP, 1 moviéndose en dirección opuesta a AEP
         self.id: Optional[int] = None
         self.status: str = "on-schedule" # on-schedule | delayed | diverted | landed
         self.landed: bool = False
@@ -102,7 +102,7 @@ class Plane:
         self.history: List[Tuple[float, float, int, int, int, int, str]] = [(minutes_from_start, MAX_RADAR_DISTANCE, self.speed, -1, 0, 0, "on-schedule")]
     
     def find_range_idx(self, x: float) -> int:
-        """Returns current distance range index"""
+        """Devuelve el índice del rango actual"""
         for i, (dist_range, _) in enumerate(self.PROXIMITY_RANGE):
             dmin, dmax = dist_range
             if dmin <= x < dmax:
@@ -113,7 +113,7 @@ class Plane:
         return 0
     
     def update_ranges(self):
-        """Updates ranges based on current position"""
+        """Actualiza el rango de velocidades y distancias según la posición actual"""
         idx = self.find_range_idx(self.pos)
         self.range_idx = idx
         self.dist_range = self.PROXIMITY_RANGE[idx][0]
@@ -132,9 +132,11 @@ class Plane:
 
     def find_gap(self, plane_list: List['Plane']) -> int:
         """
-        Returns index where self should be inserted in the plane queue.
-        Return value respects 5 min buffer with next and previous plane.
-        Returns -1 if no gap was found, -10 if plane is out of bounds
+        Devuelve el índice donde el avión debería ser insertado.
+        Valores posibles:
+        - -10 si el avión debe ser desviado
+        - -1 si hubo algún problema o el avión no encontró hueco
+        - Número entre 0 y len(plane_list) representando el índice donde insertar el avión 
         """
         if self.pos > self.MAX_RADAR_DISTANCE:
             return -10
@@ -169,11 +171,10 @@ class Plane:
         """
         Avanza un tick:
           - Actualiza posición y estado (aterrizado si pos<=0)
-          - Recalcula rangos y ETA
+          - Recalcula rangos
           - Actualiza status on-time/delayed según STA si está disponible
         """
         
-        # Move
         self.pos += self.speed * self.dt * self.dir
         t0 = datetime(*self.DATE)  # 2025-09-10 06:00:00
         minutes_since_start = (now - t0).total_seconds() / 60.0
@@ -209,6 +210,12 @@ class Plane:
         self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
 
     def update(self, now: datetime, plane_list: List['Plane'], reposition_list: List['Plane'], plane_idx: int) -> Dict[str, Any]:
+        """
+        Devuelve un diccionario conteniendo:
+        action: acción a realizar por el Handler (desviar, reposicionar, re-insertar, none)
+        status: estado actual del avión
+        idx: posición en donde reinsertar al avión
+        """
 
         t0 = datetime(*self.DATE)  # 2025-09-10 06:00:00
         minutes_since_start = (now - t0).total_seconds() / 60.0
@@ -221,7 +228,7 @@ class Plane:
         if self.landed or self.status == "landed":
             return {"action": "none", "status": self.status, "idx": -1}
 
-        # Avion se aleja de AER
+        # Avion se aleja de AEP
         if self.dir == 1:
             if self.pos <= 5:
                 return {"action":"none", "status": self.status, "idx": -1} 
@@ -231,7 +238,7 @@ class Plane:
                 self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
                 return {"action": "divert", "status": self.status, "idx": -10}
             elif idx == -1:
-                # Manejar casos en los que el avión no encuentra un espacio y tiene que permanecer en la cola de reposicionamiento
+                # Maneja casos en los que el avión no encuentra un espacio y tiene que permanecer en la cola de reposicionamiento
                 action = "none"
                 if plane_idx > 0:
                     time_gap = self.calc_gap(reposition_list[plane_idx - 1].pos)
@@ -250,7 +257,7 @@ class Plane:
                 self.status = "on-schedule"
                 return {"action": "insert", "status": self.status, "idx": idx}
 
-        # Moving towards AEP and self is not first plane
+        # Maneja el caso donde el avión se mueve hacia AEP y no es el primero de la fila
         if 0 < plane_idx < len(plane_list):
             next_plane = plane_list[plane_idx - 1]
             time_gap = self.calc_gap(next_plane.pos)
@@ -269,7 +276,7 @@ class Plane:
                 # Updatea la velocidad a la vel max permitida 
                 self.speed = self.speed_range[1]
 
-            # Si self sale de la vel minima, 
+            # Si se sale de la velocidad mínima, entra en reposicionamiento 
             if self.speed < self.speed_range[0]:
                 self.dir = 1
                 self.adjusting_speed = False
@@ -332,6 +339,7 @@ class Handler:
         self.plane_params = plane_params
         
     def create_plane(self, now: datetime) -> 'Plane':
+        """Instancia un nuevo avión y lo devuelve para ser agregado a la simulación"""
         min_from_start = (now - datetime(*self.DATE)).total_seconds() // 60
         p = Plane(**self.plane_params, minutes_from_start=min_from_start)
         p.sta = now + timedelta(minutes= ((50/300 + 35/250 + 10/200 + 5/150) * 60))
@@ -339,6 +347,7 @@ class Handler:
         return p
 
     def sort_incoming(self, incoming_planes: List['Plane']) -> None:
+        """Ordena los aviones según posición para simplificar el código de la simulación"""
         incoming_planes.sort(key=lambda x: (x.pos is None, x.pos))
 
     def simulate(self) -> Dict[str, Any]:
@@ -357,12 +366,13 @@ class Handler:
             reposition_count = 0
 
             closed_interval = 18 * 60
-            if self.CLOSING_TIME:
+            if self.CLOSING_TIME: # Solo entra si el usuario habilitó la opción
+                # Samplea un minuto random entre 0 y 1079. Este minuto sera el horario del inicio de cierre de AEP
                 times = [i for i in range(1080)]
                 closed_interval = random.choice(times)
                 
             for t in range(self.SIMULATION_TIME):
-                if closed_interval < self.SIMULATION_TIME:
+                if closed_interval < self.SIMULATION_TIME: # Chequea si estamos en un t dentro del horario de cierre
                     if closed_interval < t <= closed_interval + 30:
                         self.AIRPORT_OPEN = False
                     else:
@@ -373,22 +383,20 @@ class Handler:
                         p.tick(now, self.AIRPORT_OPEN)
 
                 if np.random.uniform(0, 1) <= self.LAMBDA:
+                    # Maneja llegada de nuevos aviones
                     p = self.create_plane(now)
                     all_planes.append(p)
                     incoming_planes.append(p)
 
-
-                # Sanity check
-                # self.sort_incoming(incoming_planes)
-
                 i = 0
                 while i < len(incoming_planes):
+                    # Actualiza los parámetros (velocidades, listas, etc) de los aviones en dir. hacia AEP
                     p = incoming_planes[i]
 
                     if p.landed or p.status == "landed":
                         landed_count += 1
                         incoming_planes.pop(i)
-                        # No se acutaliza porque se elimina de incoming_planes
+                        # No se acutaliza i porque se elimina de incoming_planes
                         continue
 
                     res = p.update(now, incoming_planes, repositioning_planes, i)
@@ -398,13 +406,13 @@ class Handler:
                         reposition_count += 1
                         repositioning_planes.append(p)
                         incoming_planes.pop(i)
-                        # No se acutaliza porque va a la cola
+                        # No se acutaliza i porque va a la otra cola
                         continue
 
                     if action == "divert":
                         diverted_count += 1
                         incoming_planes.pop(i)
-                        # no se acutaliza porque va a montevideo
+                        # No se acutaliza i porque va a MVD
                         continue
 
                     i += 1
@@ -412,19 +420,18 @@ class Handler:
                 self.sort_incoming(repositioning_planes)
                 j = 0
                 while j < len(repositioning_planes):
+                    # Actualiza los parámetros de los aviones en la fila de reposicionamiento
                     p = repositioning_planes[j]
                     res = p.update(now, incoming_planes, repositioning_planes, j)
                     action = res.get("action", "none")
 
-                    if action == "insert":
+                    if action == "insert": # El avion se puede reinsertar en la cola
                         idx = res.get("idx", None)
                         if idx is not None and idx >= 0:
                             if idx > len(incoming_planes):
                                 idx = len(incoming_planes)
                             incoming_planes.insert(idx, p)
                             repositioning_planes.pop(j)
-                        # self.sort_incoming(incoming_planes) # Sanity check
-                        # no update j bc removed element
                         continue
 
                     if action == "divert":
@@ -438,6 +445,7 @@ class Handler:
 
             hist = [p.history for p in all_planes]
 
+            # Guardamos las métricas necesarias para hacer los gráficos posteriormente
             if self.SAVE_HISTORY:
                 tracker.append({
                     "simulation_id": sim,
