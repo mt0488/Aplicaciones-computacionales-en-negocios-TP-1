@@ -65,7 +65,7 @@ class Plane:
     UPPER_BOUNDS: List[int] = [10_000_000,100,50,15,5],
     MAX_SPEEDS: List[int]  = [500, 300, 250, 200, 150],
     MIN_SPEEDS: List[int] = [300, 250, 200, 150, 120],
-    PROP_BOUNCE: float = 0, # Probability to interrupt landing and go back to plane queue
+    PROP_BOUNCE: float = 0, # Probabilidad de interrumpir el aterrizaje y volver a la cola de reposicionamiento
     minutes_from_start: int = 0
     ):
         self.MAX_RADAR_DISTANCE = MAX_RADAR_DISTANCE
@@ -92,27 +92,14 @@ class Plane:
         self.id: Optional[int] = None
         self.status: str = "on-schedule" # on-schedule | delayed | diverted | landed
         self.landed: bool = False
-        self.sta: datetime = None  # Scheduled Time of Arrival
-        self.eta: datetime = None  # Estimated Time of Arrival
-        self.ata: datetime = None  # Actual Time of Arrival
-        self.dt: float = DT  # step size
+        self.sta: datetime = None  # Hora de llegada programada
+        self.eta: datetime = None  # Hora de llegada estimada
+        self.ata: datetime = None  # Hora real de llegada
+        self.dt: float = DT  # tamaño de step
         self.adjusting_speed: bool = False
         self.minutes_congested: int = 0
         self.reposition_count: int = 0
         self.history: List[Tuple[float, float, int, int, int, int, str]] = [(minutes_from_start, MAX_RADAR_DISTANCE, self.speed, -1, 0, 0, "on-schedule")]
-
-
-    def minutes_from_MVD(self):
-        """
-        Returns minutes from MVD from current position assuming max speed can be achieved at every range.
-        """
-        minutes = 0
-        x = self.pos
-        if x < self.MAX_RADAR_DISTANCE:
-            minutes += ((self.MAX_RADAR_DISTANCE - self.pos)/ self.MAX_DEVIATION_SPEED) * 60
-            x = self.MAX_RADAR_DISTANCE
-        minutes += ((31/200 + 5/150) * 60)
-        return minutes
     
     def find_range_idx(self, x: float) -> int:
         """Returns current distance range index"""
@@ -153,25 +140,25 @@ class Plane:
             return -10
 
         if not plane_list or len(plane_list) == 0:
-            # If plane_list is empty and plane is in radar distance, it can be inserted at first pos.
+            # Si plane_list está vacío y el avión está dentro de la distancia del radar, se puede insertar en la primera posición.
             return 0 if self.pos <= self.MAX_RADAR_DISTANCE else -1
 
         positions = [p.pos for p in plane_list]
 
-        # If there are planes with no position, something went wrong previously
+        # Si hay aviones sin posicion, algo esta mal
         if any(e is None for e in positions): return -1
-        # If for some reason positions are not ordered, something went wrong previously
+        # Si las posiciones no estan ordenadas algo esta mal
         if not all(positions[i] <= positions[i + 1] for i in range(len(positions) - 1)): return -1
 
         idx = bisect.bisect_left(positions, self.pos)
 
         delta = timedelta(minutes=self.MIN_BUF)
 
-        # Check if next plane is 5 mins ahead
+        # Comprueba si el próximo avión está 5 minutos más adelante
         if idx - 1 >= 0:
             if timedelta(minutes=(self.calc_gap(positions[idx - 1]))) < delta:
                 return -1
-        # Check if previous plane is 5 mins behind
+        # Comprueba si el próximo avión está 5 minutos más atras
         if idx < len(positions):
             if timedelta(minutes=(self.calc_gap(positions[idx]))) < delta:
                 return -1
@@ -192,12 +179,11 @@ class Plane:
         minutes_since_start = (now - t0).total_seconds() / 60.0
         if self.pos <= 0:
             self.pos = 0
-            will_bounce = np.random.uniform(0, 1) # deal with landing interruptions
+            will_bounce = np.random.uniform(0, 1) # resuelve las interrupciones de aterrizaje
             if not airport_open:
                 self.status = "diverted"
-                self.minutes_congested += self.minutes_from_MVD()
                 self.dir = 1
-            else:
+            else: # el aeropuerto esta abierto
                 if will_bounce < self.PROP_BOUNCE:
                     self.dir = 1
                     self.speed = self.MAX_DEVIATION_SPEED
@@ -210,7 +196,7 @@ class Plane:
             self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
             return
 
-        # Update ranges
+        # Updatea rangos
         if self.dir == -1:
             self.update_ranges()
 
@@ -219,7 +205,6 @@ class Plane:
 
         if self.pos > self.MAX_RADAR_DISTANCE:
             self.status = "diverted"
-            self.minutes_congested += self.minutes_from_MVD()
 
         self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
 
@@ -230,33 +215,30 @@ class Plane:
         if self.status == "diverted":
             return {"action": "divert", "status": self.status, "idx": -10}
         if self.status == "bounced":
+            self.reposition_count += 1
             self.status = "repositioning"
             return {"action": "reposition", "status": self.status, "idx": -1}
-        if self.landed:
+        if self.landed or self.status == "landed":
             return {"action": "none", "status": self.status, "idx": -1}
 
-        # Plane is moving away from AEP
+        # Avion se aleja de AER
         if self.dir == 1:
             if self.pos <= 5:
                 return {"action":"none", "status": self.status, "idx": -1} 
             idx = self.find_gap(plane_list)
             if idx == -10:
                 self.status = "diverted"
-                # Agregamos el tiempo estimado de llegada a MVD como minutos donde el avion sufre congestion/retraso
-                # dado que no formaba parte de su plan de vuelo
-                self.minutes_congested += self.minutes_from_MVD()
                 self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
                 return {"action": "divert", "status": self.status, "idx": -10}
             elif idx == -1:
-                # Handle cases when plane doesn't find a gap and has to remain in the reposition queue
+                # Manejar casos en los que el avión no encuentra un espacio y tiene que permanecer en la cola de reposicionamiento
                 action = "none"
                 if plane_idx > 0:
                     time_gap = self.calc_gap(reposition_list[plane_idx - 1].pos)
                     if time_gap < self.MIN_THRESHOLD: self.speed = reposition_list[plane_idx - 1].speed - self.SPEED_ADJUSTMENT
                     if self.speed < self.MIN_DEVIATION_SPEED:
                         self.status = "diverted"
-                        # Idem if idx == -10
-                        self.minutes_congested += self.minutes_from_MVD()
+                        # Idem si idx == -10
                         self.history.append((minutes_since_start, self.pos, self.speed, self.dir, self.minutes_congested, self.reposition_count, self.status))
                         action = "divert"
                 return {"action": action, "status": self.status, "idx": -1} 
@@ -281,13 +263,13 @@ class Plane:
                     self.adjusting_speed = False
                     self.speed = self.speed_range[1]
                 else:
-                    # keep safety speed until MIN_BUF is achieved
+                    # Mantener la velocidad de seguridad hasta alcanzar MIN_BUF
                     self.speed = next_plane.speed - self.SPEED_ADJUSTMENT
             else:
-                # Updte speed to max permitted speed
+                # Updatea la velocidad a la vel max permitida 
                 self.speed = self.speed_range[1]
 
-            # If self fell out of min speed, 
+            # Si self sale de la vel minima, 
             if self.speed < self.speed_range[0]:
                 self.dir = 1
                 self.adjusting_speed = False
@@ -387,7 +369,7 @@ class Handler:
                         self.AIRPORT_OPEN = True
                         
                 for p in all_planes:
-                    if (not p.landed) and (p.status != "diverted"): # only on-air planes are updated
+                    if (not p.landed) and (p.status != "diverted"): # Solo aviones en vuelo son actualizados
                         p.tick(now, self.AIRPORT_OPEN)
 
                 if np.random.uniform(0, 1) <= self.LAMBDA:
@@ -406,27 +388,28 @@ class Handler:
                     if p.landed or p.status == "landed":
                         landed_count += 1
                         incoming_planes.pop(i)
-                        # no update i bc removed element
+                        # No se acutaliza porque se elimina de incoming_planes
                         continue
 
                     res = p.update(now, incoming_planes, repositioning_planes, i)
                     action = res.get("action", "none")
 
-                    if action == "reposition": # plane has moved to repositioning queue
+                    if action == "reposition": # El avión se mueve a la cola de reposicionamiento.
                         reposition_count += 1
                         repositioning_planes.append(p)
                         incoming_planes.pop(i)
-                        # no update i bc removed element
+                        # No se acutaliza porque va a la cola
                         continue
 
                     if action == "divert":
                         diverted_count += 1
                         incoming_planes.pop(i)
-                        # no update i bc removed element
+                        # no se acutaliza porque va a montevideo
                         continue
 
                     i += 1
-
+                
+                self.sort_incoming(repositioning_planes)
                 j = 0
                 while j < len(repositioning_planes):
                     p = repositioning_planes[j]
@@ -447,7 +430,6 @@ class Handler:
                     if action == "divert":
                         diverted_count += 1
                         repositioning_planes.pop(j)
-                        # no update j bc removed element
                         continue
 
                     j += 1
@@ -475,5 +457,5 @@ class Handler:
             simulation_stats.append(get_simulation_averages(hist, sim))
                 
 
-        return pd.DataFrame(results), simulation_stats, tracker
+        return pd.DataFrame(results), pd.DataFrame(simulation_stats), tracker
     
