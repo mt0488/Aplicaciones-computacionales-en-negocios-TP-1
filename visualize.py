@@ -1,4 +1,3 @@
-# visualize.py
 import sys
 import io
 import pygame
@@ -70,14 +69,23 @@ def visualize(
         # Tipos de letra escalados
         font_size       = max(14, int(h * 0.025))
         clock_font_size = max(20, int(h * 0.045))
+        counter_font_size = max(16, int(h * 0.03))
         FONT       = pygame.font.SysFont(None, font_size)
         CLOCK_FONT = pygame.font.SysFont(None, clock_font_size)
+        COUNTER_FONT = pygame.font.SysFont(None, counter_font_size)
 
         # Sprite escalado respecto a altura
         target_sprite_w = max(22, int(h * 0.045))
 
         # Buffer visual delante del avión
         buffer_rect_h = max(14, int(h * 0.03))
+
+        # Panel contadores (arriba izquierda)
+        counters_rect = pygame.Rect(
+            10, 10 + clock_font_size + 8,
+            int(w * 0.22),  # ancho relativo
+            int(h * 0.12)
+        )
 
         return {
             "LEFT_MARGIN": left_margin,
@@ -91,8 +99,10 @@ def visualize(
             "BTN_SIZE": btn_size,
             "FONT": FONT,
             "CLOCK_FONT": CLOCK_FONT,
+            "COUNTER_FONT": COUNTER_FONT,
             "SPRITE_W": target_sprite_w,
             "BUFFER_RECT_H": buffer_rect_h,
+            "COUNTERS_RECT": counters_rect,
         }
 
     L = compute_layout(WIDTH, HEIGHT)
@@ -102,6 +112,7 @@ def visualize(
     BLACK = (0, 0, 0)
     WHITE = (255, 255, 255)
     RED   = (255, 0, 0)
+    PANEL_BG = (0, 0, 0, 120)  # semi-transparente
 
     # ==================== CARGA SPRITES ====================
     def surface_from_svg(path, target_w):
@@ -170,6 +181,13 @@ def visualize(
     # ==================== ESTRUCTURAS EN EJECUCIÓN ====================
     planes = {}       # idx -> dict estado runtime
     plane_state = {}  # idx -> {"hist_pos": int, "active": bool}
+
+    # ---- Contadores ----
+    landed_total = 0
+    diverted_total = 0
+    flying_current = 0
+    seen_landed = set()
+    seen_diverted = set()
 
     sim_minutes = 0.0
     last_processed_minute = -1
@@ -259,7 +277,12 @@ def visualize(
                 # Estado actual (ignoramos campos extra si los hay)
                 rec = hist[plane_state[idx]["hist_pos"]]
                 t0, pos0, speed0, dir0 = rec[0], rec[1], rec[2], int(rec[3])
-                status0 = (rec[6] if len(rec) >= 5 else "") or ""
+                # status puede venir en 5to o 7mo campo según tu historial; tomamos defensivo
+                status0 = ""
+                if len(rec) >= 5:
+                    status0 = rec[4]
+                if len(rec) >= 7:
+                    status0 = rec[6]
                 dt_min = max(0.0, sim_minutes - float(t0))
                 pos_now = float(pos0) + (float(speed0) * (dt_min / 60.0)) * (1 if dir0 == 1 else -1)
                 x_tip = x_from_nm(pos_now)
@@ -278,7 +301,7 @@ def visualize(
                     "speed": float(speed0),
                     "dir": dir0,
                     "mode": "normal",   # "normal" | "divert"
-                    "is_repo": (dir0 == 1) or (status0.lower() == "bounced"),
+                    "is_repo": (dir0 == 1) or (str(status0).lower() == "bounced"),
                     "x": rect.centerx,  # para modo "divert"
                     "y": rect.centery,  # para modo "divert"
                 }
@@ -316,16 +339,28 @@ def visualize(
 
                 rec = hist[st["hist_pos"]]
                 t_now, pos_nm, speed_knots, dir_now = rec[0], rec[1], rec[2], int(rec[3])
-                status_now = (rec[6] if len(rec) >= 5 else "") or ""
+
+                status_now = ""
+                if len(rec) >= 5:
+                    status_now = rec[4]
+                if len(rec) >= 7:
+                    status_now = rec[6]
+                status_now = (status_now or "").lower()
                 dir_now = int(dir_now)
 
-                # Aterrizado → se elimina
-                if status_now.lower() == "landed":
+                # Aterrizado → contar una vez y eliminar
+                if status_now == "landed":
+                    if idx not in seen_landed:
+                        landed_total += 1
+                        seen_landed.add(idx)
                     to_remove.append(idx)
                     continue
 
-                # Desviado → cambia a modo vertical (no eliminar)
-                if status_now.lower() == "diverted":
+                # Desviado → cambia a modo vertical y contar una vez
+                if status_now == "diverted":
+                    if idx not in seen_diverted:
+                        diverted_total += 1
+                        seen_diverted.add(idx)
                     # Posición actual como punto de partida vertical
                     dt_min = max(0.0, sim_minutes - float(t_now))
                     pos_now = float(pos_nm) + (float(speed_knots) * (dt_min / 60.0)) * (1 if dir_now == 1 else -1)
@@ -351,7 +386,7 @@ def visualize(
                 pdata["tip_x"] = x_tip
 
                 # Reposicionamiento: recuadro rojo si dir==1 o status == "bounced"
-                is_repositioning = (dir_now == 1) or (status_now.lower() == "bounced")
+                is_repositioning = (dir_now == 1) or (status_now == "bounced")
 
                 # Colocar rect según dir manteniendo nariz en x_tip
                 if dir_now == -1:
@@ -369,6 +404,9 @@ def visualize(
         for idx in to_remove:
             planes.pop(idx, None)
             plane_state.pop(idx, None)
+
+        # ---- Actualizar "En vuelo" (todos los activos no en modo desvío) ----
+        flying_current = sum(1 for p in planes.values() if p.get("mode") != "divert")
 
         # ==================== DIBUJO ====================
         WIDTH, HEIGHT = screen.get_size()
@@ -465,6 +503,20 @@ def visualize(
         clock_rect.top = 10
         clock_rect.right = WIDTH - 10
         screen.blit(clock_surf, clock_rect)
+
+        # ---- Panel contadores (arriba izquierda) ----
+        COUNTER_FONT = L["COUNTER_FONT"]
+        panel = pygame.Surface((L["COUNTERS_RECT"].w, L["COUNTERS_RECT"].h), pygame.SRCALPHA)
+        panel.fill(PANEL_BG)
+        line1 = COUNTER_FONT.render(f"En vuelo: {flying_current}", True, WHITE)
+        line2 = COUNTER_FONT.render(f"Arribados: {landed_total}", True, WHITE)
+        line3 = COUNTER_FONT.render(f"Desviados: {diverted_total}", True, WHITE)
+        # margen interno
+        pad = 10
+        panel.blit(line1, (pad, pad))
+        panel.blit(line2, (pad, pad + line1.get_height() + 4))
+        panel.blit(line3, (pad, pad + line1.get_height() + line2.get_height() + 8))
+        screen.blit(panel, (L["COUNTERS_RECT"].x, L["COUNTERS_RECT"].y))
 
         pygame.display.flip()
         clock.tick(fps)
